@@ -72,9 +72,9 @@ _registre = {
 }
 """
 
+import cfg
 import os.path
-from PIL import Image # Necessari per llegir les metadades i dimensions de la imatge
-
+from PIL import Image
 # Llista de metadades obligatòries que s'han de considerar.
 METADADES_IA = [
     "Prompt", 
@@ -88,7 +88,7 @@ METADADES_IA = [
 ]
 
 # Valor de convenció per a camps no definits
-VALOR_NONE = "None"
+VALOR_NONE = None
 VALOR_ERROR = -1
 
 class ImageData:
@@ -159,14 +159,16 @@ class ImageData:
             print(f"ERROR: UUID '{uuid}' no trobat al registre. No es poden carregar metadades.")
             return
 
-        entrada = self._dic_registre[uuid] # Carreguem el diccionari amb les metadades.
-        path_arxiu = entrada["file"] # Obtenim el path canònic de l'arxiu.
+        entrada = self._dic_registre[uuid]
+        path_arxiu_relatiu = entrada["file"] # Aquest és p.ex. "ciutat/img1.png"
         
-        # 1. Obtenir el path complet (absolut) del fitxer
-        
+        # 1. CONSTRUIR EL PATH COMPLET (ABSOLUT)
+        #    Necessitem el path base (ROOT_DIR) + el path relatiu
+        path_arxiu_complet = os.path.join(cfg.get_root(), path_arxiu_relatiu)
+
         try:
-            # Intentem obrir la imatge amb PIL/Pillow
-            img = Image.open(path_arxiu)
+            # Intentem obrir la imatge amb el PATH COMPLET
+            img = Image.open(path_arxiu_complet)
             
             # Llegim les dimensions de la imatge
             entrada["width"] = img.width
@@ -191,13 +193,12 @@ class ImageData:
 
     #GETTERS
     
-    def _obtenir_dada(self, uuid: str, clau: str) -> str | tuple | int:
+    def _obtenir_dada(self, uuid: str, clau: str) -> str | tuple | int | None:
         """Funció auxiliar per obtenir qualsevol dada del registre per UUID i clau."""
         if uuid not in self._dic_registre:
-            # Si l'UUID no existeix, retornem el valor per defecte de la clau concreta, -1 o None.
             if clau in ["width", "height"]:
                 return VALOR_ERROR
-            return VALOR_NONE
+            return VALOR_NONE # <-- Ara retorna l'objecte None
         
         # Retorna la dada emmagatzemada o None si la clau no existeix.
         return self._dic_registre[uuid].get(clau, VALOR_NONE)
