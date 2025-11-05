@@ -110,3 +110,13 @@ class ImageID:
         # Eliminem l'element del diccionari si existeix el path.
         if path_a_eliminar:
             del self._dic_uuids[path_a_eliminar]
+
+    def __len__(self) -> int:
+        """ Retorna el nombre total d'imatges registrades. """
+        return len(self._dic_uuids)
+
+    def __str__(self) -> str:
+        """ Retorna una representació en text de l'objecte. """
+        return f"<ImageData: gestionant {len(self)} imatges>"
+
+    
