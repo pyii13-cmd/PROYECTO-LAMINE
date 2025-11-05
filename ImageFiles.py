@@ -27,15 +27,6 @@ Notes:
     - Només considereu arxius amb extensió .png (case-insensitive)
     - Heu de recórrer tots els subdirectoris recursivament
 """
-import cfg
-import os
-import os.path
 
-class ImageFiles:
-    def __init__(self):
-        self._arxius_anteriors = set()
-        self._arxius_actuals = set()
-    def reload_fs(self,path: str):
-        self._arxius_anteriors = self._arxius_actuals.copy()
-        nous_arxius = set()
-        
+
+print("lamine panchito")
