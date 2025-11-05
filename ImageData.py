@@ -187,9 +187,9 @@ class ImageData:
 
         # CONTROLS D'EXECEPCIONS AMB L'OBERTURA DELS FITXERS O LES LECTURES AMB PILLOW.
         except FileNotFoundError:
-            print(f"ERROR: Arxiu '{path_arxiu}' no trobat al disc.")
+            print(f"ERROR: Arxiu '{path_arxiu_complet}' no trobat al disc.")
         except Exception as e:
-            print(f"ERROR llegint imatge/metadades de '{path_arxiu}' ({uuid}): {e}")
+            print(f"ERROR llegint imatge/metadades de '{path_arxiu_relatiu}' ({uuid}): {e}")
 
     #GETTERS
     
@@ -241,3 +241,11 @@ class ImageData:
         amplada = self._obtenir_dada(uuid, "width")
         altura = self._obtenir_dada(uuid, "height")
         return (amplada, altura)
+    
+    def __len__(self) -> int:
+        """ Retorna el nombre total d'UUIDs registrats. """
+        return len(self._dic_registre)
+
+    def __str__(self) -> str:
+        """ Retorna una representació en text de l'objecte. """
+        return f"<ImageID: gestionant {len(self)} UUIDs>"
