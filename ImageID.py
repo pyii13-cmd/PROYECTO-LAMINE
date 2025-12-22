@@ -31,92 +31,96 @@ Notes:
     - Els UUID s'emmagatzemen com a strings
     - Un UUID només es pot generar una vegada (fins que s'elimini)
 """
-
+import os
 import cfg
+from typing import Optional
 
 class ImageID:
-    """
-    Gestiona la generació i el registre d'identificadors únics (UUID)
-    per a imatges, assegurant que no hi hagi col·lisions.
-    """
-    
-    # Registre intern: Diccionari compartit per totes les instàncies de la classe.
-    # Clau: path canònic del fitxer (str)
-    # Valor: UUID generat (str)
-    _dic_uuids: dict[str, str] = {}
-    
     def __init__(self):
-        pass
+        # map: path_canonic -> uuid_str
+        self._dic_uuids = {}
 
-    
-    def generate_uuid(self, fitxer: str) -> str | None:
-        """
-        Genera i registra un UUID únic per a l'arxiu especificat.
-        
-        Args:
-            fitxer (str): El path canònic de l'arxiu.
-            
-        Returns:
-            str | None: El UUID generat com a string, o None si hi ha col·lisió.
-        """
-        # 1. Comprova si ja existeix el path a les claus del diccionari.
-        if fitxer in self._dic_uuids:
-            return self._dic_uuids[fitxer]
-        
-        # 2. Genera l'UUID utilitzant la funció del cfg.
-        uuid_obj_nou = cfg.get_uuid(fitxer)
-        uuid_str_nou = str(uuid_obj_nou)
+    def _normalize(self, file: str) -> str:
+        """Normalitza el path per buscar coincidències"""
+        try:
+            if not isinstance(file, str):
+                return ""
+            # Intentem obtenir el canonical relatiu si cfg pot
+            try:
+                can = cfg.get_canonical_pathfile(file)
+                if can:
+                    return can.replace("\\", "/")
+            except Exception:
+                pass
+            # fallback: normpath i replace separadors
+            p = os.path.normpath(file)
+            return p.replace("\\", "/")
+        except Exception:
+            return file.replace("\\", "/") if isinstance(file, str) else ""
 
-        # 3. Comprovació de col·lisions: mirem si el nou UUID generat ja existeix
-        #    com a VALOR assignat a una altra RUTA.
-        if uuid_str_nou in self._dic_uuids.values():
-            print(f"Col·lisió detectada! L'UUID '{uuid_str_nou}' ja està en ús.")
-            print(f"L'arxiu '{fitxer}' no es pot afegir.")
+    def generate_uuid(self, file: str) -> Optional[str]:
+        if not file or not isinstance(file, str):
+            print("WARNING (ImageID): fitxer invàlid a generate_uuid().")
             return None
-        
-        # 4. Si és únic, l'afegim utilitzant el path canònic com a clau.
-        self._dic_uuids[fitxer] = uuid_str_nou
-        return uuid_str_nou
+        path_key = self._normalize(file)
+        if not path_key:
+            print("WARNING (ImageID): path canònic buit.")
+            return None
 
-    
-    def get_uuid(self, fitxer: str) -> str | None:
-        """
-        Retorna el UUID associat a l'arxiu, si ja ha estat generat i és actiu.
-        
-        Args:
-            fitxer (str): El path canònic de l'arxiu.
-            
-        Returns:
-            str | None: El UUID com a string, o None si el fitxer no s'ha registrat.
-        """
-        # Retorna el valor associat al path o None si el path no és al diccionari.
-        return self._dic_uuids.get(fitxer, None)
+        # Si ja existeix per aquest path, retornem el mateix UUID (no crear-ne un de nou)
+        if path_key in self._dic_uuids:
+            return self._dic_uuids[path_key]
 
-    
-    def remove_uuid(self, uuid_str: str) -> None:
-        """
-        Elimina el registre d'un UUID del sistema. L'UUID queda lliure.
-        
-        Args:
-            uuid_str (str): El UUID a eliminar com a string.
-        """
-        # Cerquem el path corresponent a l'UUID
-        path_a_eliminar = None
-        for path_canonic, uuid_registrat in self._dic_uuids.items():
-            if uuid_registrat == uuid_str:
-                path_a_eliminar = path_canonic
-                break
-        
-        # Eliminem l'element del diccionari si existeix el path.
-        if path_a_eliminar:
-            del self._dic_uuids[path_a_eliminar]
+        # Generem l'UUID amb cfg.get_uuid (pot llençar excepció)
+        try:
+            uuid_obj = cfg.get_uuid(path_key)
+            uuid_str = str(uuid_obj)
+        except Exception:
+            print("WARNING (ImageID): error generant UUID amb cfg.get_uuid().")
+            return None
+
+        # Si l'UUID ja està assignat a un altre path, denunciem col·lisió
+        if uuid_str in self._dic_uuids.values():
+            print(f"WARNING (ImageID): col·lisió d'UUID detectada ({uuid_str}). Fitxer ignorat.")
+            return None
+
+        self._dic_uuids[path_key] = uuid_str
+        return uuid_str
+
+    def get_uuid(self, file: str) -> Optional[str]:
+        if not file or not isinstance(file, str):
+            return None
+        path_key = self._normalize(file)
+        if path_key in self._dic_uuids:
+            return self._dic_uuids[path_key]
+        # Intentem matches parcials: buscar si qualsevol key acaba o conté el path proporcionat
+        try:
+            for k, v in self._dic_uuids.items():
+                if k == file or k.endswith(file) or file.endswith(k):
+                    return v
+        except Exception:
+            pass
+        return None
+
+    def remove_uuid(self, uuid: str) -> None:
+        if not uuid:
+            return
+        try:
+            to_del = None
+            for k, v in list(self._dic_uuids.items()):
+                if v == uuid:
+                    to_del = k
+                    break
+            if to_del:
+                del self._dic_uuids[to_del]
+        except Exception:
+            pass
 
     def __len__(self) -> int:
-        """ Retorna el nombre total d'imatges registrades. """
-        return len(self._dic_uuids)
+        try:
+            return len(self._dic_uuids)
+        except Exception:
+            return 0
 
     def __str__(self) -> str:
-        """ Retorna una representació en text de l'objecte. """
-        return f"<ImageData: gestionant {len(self)} imatges>"
-
-    
+        return f"<ImageID: {len(self)} UUIDs registrats>"

@@ -53,70 +53,86 @@ Notes:
     - Els operadors lògics NO modifiquen les llistes originals
     - Aquests mètodes NO retornen objectes Gallery, sinó llistes simples
 """
+from typing import List
+import cfg
 
 class SearchMetadata:
-    """
-    Classe per cercar imatges segons metadades
-    """
-    def __init__(self, metadata_dict: dict):
-        self.image_data = metadata_dict
+    def __init__(self, image_data_instance):
+        self.data = image_data_instance
 
-    def busqueda(self, camp: str, sub: str) -> list:
-        """
-        Funció interna per a realitzar una cerca de subcadena.
-        
-        Args:
-            camp (str): Camp de metadades a cercar
-            sub (str): subcadena de text
-            
-        Returns:
-            list: Una llista de cadenes UUID que contenen la subcadena
-        """
-        res = []
-        for uuid, metadata in self.image_data.items():
-            field_value = metadata.get(camp, "") #filtrem pel camp
-            if str(field_value).find(sub) != -1:
-                res.append(uuid)
+    def _uuids(self) -> List[str]:
+        try:
+            if hasattr(self.data, "_data_storage"):
+                return list(self.data._data_storage.keys())
+        except Exception:
+            pass
+        return []
+
+    def _search(self, getter_name: str, sub) -> List[str]:
+        res: List[str] = []
+        if sub is None:
+            return res
+        sub_s = str(sub)
+        for uuid in self._uuids():
+            try:
+                getter = getattr(self.data, getter_name, None)
+                if not getter:
+                    continue
+                val = getter(uuid)
+                if val is None:
+                    continue
+                if sub_s in str(val):
+                    res.append(uuid)
+            except Exception:
+                continue
         return res
-    
-    def prompt(self, sub: str) -> list:
-        """Retorna una llista d'UUID de les imatges que contenen 'sub' en el camp Prompt."""
-        return self.busqueda('Prompt', sub)
 
-    def model(self, sub: str) -> list:
-        """Retorna una llista d'UUID de les imatges que contenen 'sub' en el camp Model."""
-        return self.busqueda('Model', sub)
-    
-    def seed(self, sub: str) -> list:
-        """Retorna una llista d'UUID de les imatges que contenen 'sub' en el camp Seed."""
-        return self.busqueda('Seed', sub)
+    def prompt(self, sub: str) -> List[str]:
+        return self._search("get_prompt", sub)
 
-    def cfg_scale(self, sub: str) -> list:
-        """Retorna una llista d'UUID de les imatges que contenen 'sub' en el camp CFG_Scale."""
-        return self.busqueda('CFG_Scale', sub)
+    def model(self, sub: str) -> List[str]:
+        return self._search("get_model", sub)
 
-    def steps(self, sub: str) -> list:
-        """Retorna una llista d'UUID de les imatges que contenen 'sub' en el camp Steps."""
-        return self.busqueda('Steps', sub)
+    def seed(self, sub: str) -> List[str]:
+        return self._search("get_seed", sub)
 
-    def sampler(self, sub: str) -> list:
-        """Retorna una llista d'UUID de les imatges que contenen 'sub' en el camp Sampler."""
-        return self.busqueda('Sampler', sub)
+    def cfg_scale(self, sub: str) -> List[str]:
+        return self._search("get_cfg_scale", sub)
 
-    def date(self, sub: str) -> list:
-        """Retorna una llista d'UUID de les imatges que contenen 'sub' en el camp Created_Date."""
-        return self.busqueda('Created_Date', sub)
-    
-    def and_operator(self, list1: list, list2: list) -> list:
-        """Retorna una llista amb els UUID que apareixen en AMBDUES llistes."""
-        set1 = set(list1)
-        set2 = set(list2)
-        interseccio = set1.intersection(set2)
-        return list(interseccio)
-    
-    def or_operator(self, list1: list, list2: list) -> list:
-        """Retorna una llista amb els UUID que apareixen en QUALSEVOL de les dues llistes, sense duplicats."""
-        set1 = set(list1)
-        set2 = set(list2)
-        unio = set1.union(set2)
-        return list(unio)
+    def steps(self, sub: str) -> List[str]:
+        return self._search("get_steps", sub)
+
+    def sampler(self, sub: str) -> List[str]:
+        return self._search("get_sampler", sub)
+
+    def date(self, sub: str) -> List[str]:
+        return self._search("get_created_date", sub)
+
+    # Operadors que preserven ordre: intersecció ordenada per llist1, unió ordenada per aparició
+    def and_operator(self, list1: List[str], list2: List[str]) -> List[str]:
+        try:
+            s2 = set(list2)
+            return [u for u in list1 if u in s2]
+        except Exception:
+            return []
+
+    def or_operator(self, list1: List[str], list2: List[str]) -> List[str]:
+        try:
+            seen = set()
+            res = []
+            for u in list1 + list2:
+                if u not in seen:
+                    seen.add(u)
+                    res.append(u)
+            return res
+        except Exception:
+            return []
+
+    def __len__(self) -> int:
+        try:
+            return len(self.data._data_storage)
+        except Exception:
+            return 0
+
+    def __str__(self) -> str:
+        return f"<SearchMetadata: cercant sobre {len(self)} imatges>"

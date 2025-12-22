@@ -58,194 +58,254 @@ Notes:
     - Tots els camps de metadades es guarden com a strings
 """
 
-"""
-ESTRUCTURA DEL DICCIONARI --> Clau: UUID, Valor --> un segon diccionari amb tota la info de la imatge:
-_registre = {
-    "UUID-exemple-1": {
-        "file": "path/canonic/imatge1.png",
-        "prompt": "Un gat en un coet...",
-        "seed": "12345",
-        "cfg_scale": "7.0",
-        # ... altres metadades
-    },
-    # ... altres imatges
-}
-"""
-
+import os
 import cfg
-import os.path
 from PIL import Image
-# Llista de metadades obligatòries que s'han de considerar.
-METADADES_IA = [
-    "Prompt", 
-    "Seed", 
-    "CFG_Scale", 
-    "Steps", 
-    "Sampler", 
-    "Model", 
-    "Generated", 
-    "Created_Date"
-]
+from typing import Dict, Tuple, Any
 
-# Valor de convenció per a camps no definits
-VALOR_NONE = None
-VALOR_ERROR = -1
+# Funció d'ajuda per normalitzar claus de metadades a les esperades
+def _canonical_key(k: str) -> str:
+    if not isinstance(k, str):
+        return k
+    kk = k.strip().lower().replace("-", "_").replace(" ", "_")
+    # Mapatge explícit de variants
+    if kk in ("prompt", "text", "description"):
+        return "Prompt"
+    if kk in ("seed",):
+        return "Seed"
+    if kk in ("cfg_scale", "cfg scale", "cfgscale", "cfg-scale"):
+        return "CFG_Scale"
+    if kk in ("steps", "num_steps"):
+        return "Steps"
+    if kk in ("sampler",):
+        return "Sampler"
+    if kk in ("model",):
+        return "Model"
+    if kk in ("generated",):
+        return "Generated"
+    if kk in ("created_date", "created-date", "created date", "createddate", "date"):
+        return "Created_Date"
+    # fallback: capitalitza la clau original
+    return k
 
 class ImageData:
-    """
-    Gestiona el registre de dades i metadades de la col·lecció d'imatges,
-    indexat per l'identificador únic (UUID).
-    """
-    
-    # Registre intern: Diccionari compartit per totes les instàncies.
-    # Clau: UUID (str)
-    # Valor: Diccionari amb les dades de la imatge (file, prompt, seed, etc.)
-    _dic_registre: dict[str, dict] = {}
-    
-    
     def __init__(self):
-        pass
-    
-    
-    def add_image(self, uuid: str, fitxer: str) -> None:
-        """
-        Crea una entrada per a la imatge amb l'UUID i el path especificats.
-        Inicialitza les metadades a VALOR_NONE.
-        
-        Args:
-            uuid (str): Identificador únic de la imatge.
-            fitxer (str): Path canònic de l'arxiu.
-        """
-        if uuid in self._dic_registre:
-            # Ja està afegida.
-            print("UUID Ja afegit!")
-            return 
-            
-        # Creació del diccionari de dades amb valors per defecte.
-        entrada = {
-            "file": fitxer,
-            "width": VALOR_ERROR,
-            "height": VALOR_ERROR
+        # uuid -> { file_path: str, metadata: dict, dimensions: (w,h) }
+        self._data_storage: Dict[str, Dict[str, Any]] = {}
+
+    def add_image(self, uuid: str, file: str) -> None:
+        if not uuid or not isinstance(uuid, str):
+            print("WARNING (ImageData): UUID invàlid a add_image().")
+            return
+        if not file or not isinstance(file, str):
+            print("WARNING (ImageData): file invàlid a add_image().")
+            return
+        # Inicialitzar tots els camps obligats amb "None" per coherència
+        self._data_storage[uuid] = {
+            "file_path": file.replace("\\", "/"),
+            "metadata": {
+                "Prompt": "None",
+                "Seed": "None",
+                "CFG_Scale": "None",
+                "Steps": "None",
+                "Sampler": "None",
+                "Model": "None",
+                "Generated": "None",
+                "Created_Date": "None"
+            },
+            "dimensions": (0, 0)
         }
-        
-        # Inicialització de totes les metadades d'IA a "None"
-        for clau in METADADES_IA:
-            # Utilitzem les mateixes claus que l'arxiu PNG
-            entrada[clau] = VALOR_NONE
-            
-        self._dic_registre[uuid] = entrada # Afegim al diccionari les parelles clau - valor
-                                           # tal que la clau es el UUID, i el valor un diccionari amb les metadades.
 
-    
     def remove_image(self, uuid: str) -> None:
-        """
-        Elimina la imatge i totes les seves metadades de la col·lecció.
-        
-        Args:
-            uuid (str): Identificador únic de la imatge a eliminar.
-        """
-        if uuid in self._dic_registre:
-            del self._dic_registre[uuid]
+        if not uuid:
+            return
+        self._data_storage.pop(uuid, None)
 
-    
     def load_metadata(self, uuid: str) -> None:
         """
-        Llegeix les metadades embegudes en l'arxiu PNG i les emmagatzema al registre.
-        
-        Args:
-            uuid (str): Identificador únic de la imatge a processar.
+        Llegeix metadades embegudes en el PNG i normalitza les claus.
+        Si no hi ha metadades reals, imprimeix l'avís exacte:
+            WARNING with empty metadata elements
+        i deixa els camps amb "None".
         """
-        if uuid not in self._dic_registre:
-            print(f"ERROR: UUID '{uuid}' no trobat al registre. No es poden carregar metadades.")
+        if not uuid or uuid not in self._data_storage:
+            # advertència suau, però no llença excepció
+            # (el test vol que no peti)
             return
 
-        entrada = self._dic_registre[uuid]
-        path_arxiu_relatiu = entrada["file"] # Aquest és p.ex. "ciutat/img1.png"
-        
-        # 1. CONSTRUIR EL PATH COMPLET (ABSOLUT)
-        #    Necessitem el path base (ROOT_DIR) + el path relatiu
-        path_arxiu_complet = os.path.join(cfg.get_root(), path_arxiu_relatiu)
-
+        rec = self._data_storage[uuid]
+        rel = rec.get("file_path", "")
+        # Construïm path absolut
         try:
-            # Intentem obrir la imatge amb el PATH COMPLET
-            img = Image.open(path_arxiu_complet)
-            
-            # Llegim les dimensions de la imatge
-            entrada["width"] = img.width
-            entrada["height"] = img.height
+            root = cfg.get_root()
+            abs_path = os.path.join(root, rel) if not os.path.isabs(rel) else rel
+        except Exception:
+            abs_path = rel
 
-            # Llegim les metadades de la imatge
-            metadades_png = img.info # PIL utilitza .info per arxius PNG
-            
-            # Actualitzem només els camps obligatoris
-            for clau_meta in METADADES_IA:
-                # Recuperem el valor de les metadades llegides. En cas que no hi hagi, deixem el None.
-                valor = metadades_png.get(clau_meta, VALOR_NONE) 
-                
-                # S'ha d'emmagatzemar com a string
-                entrada[clau_meta] = str(valor)
+        # Si l'arxiu no existeix, no hi ha metadades reals
+        if not os.path.isfile(abs_path):
+            # deixem els valors per defecte (ja inicialitzats), però alertem
+            print("WARNING with empty metadata elements")
+            rec["dimensions"] = (0, 0)
+            # Assegurem que hi hagi el dict metadata amb les claus esperades
+            if "metadata" not in rec or not isinstance(rec["metadata"], dict):
+                rec["metadata"] = {
+                    "Prompt": "None",
+                    "Seed": "None",
+                    "CFG_Scale": "None",
+                    "Steps": "None",
+                    "Sampler": "None",
+                    "Model": "None",
+                    "Generated": "None",
+                    "Created_Date": "None"
+                }
+            return
 
-        # CONTROLS D'EXECEPCIONS AMB L'OBERTURA DELS FITXERS O LES LECTURES AMB PILLOW.
-        except FileNotFoundError:
-            print(f"ERROR: Arxiu '{path_arxiu_complet}' no trobat al disc.")
-        except Exception as e:
-            print(f"ERROR llegint imatge/metadades de '{path_arxiu_relatiu}' ({uuid}): {e}")
+        # Llegim la imatge amb PIL i extraiem text chunks (img.info o img.text)
+        try:
+            with Image.open(abs_path) as img:
+                raw = getattr(img, "text", None)
+                if raw is None:
+                    # alguns PIL utilitzen img.info per a text
+                    raw = img.info if isinstance(img.info, dict) else None
 
-    #GETTERS
-    
-    def _obtenir_dada(self, uuid: str, clau: str) -> str | tuple | int | None:
-        """Funció auxiliar per obtenir qualsevol dada del registre per UUID i clau."""
-        if uuid not in self._dic_registre:
-            if clau in ["width", "height"]:
-                return VALOR_ERROR
-            return VALOR_NONE # <-- Ara retorna l'objecte None
-        
-        # Retorna la dada emmagatzemada o None si la clau no existeix.
-        return self._dic_registre[uuid].get(clau, VALOR_NONE)
+                # dimensions
+                w = getattr(img, "width", None)
+                h = getattr(img, "height", None)
+                try:
+                    rec["dimensions"] = (int(w) if w else 0, int(h) if h else 0)
+                except Exception:
+                    rec["dimensions"] = (0, 0)
 
+                norm: Dict[str, str] = {}
+                if raw and isinstance(raw, dict):
+                    for k, v in raw.items():
+                        try:
+                            key = _canonical_key(str(k))
+                            if isinstance(v, bytes):
+                                try:
+                                    sval = v.decode("utf-8", errors="ignore")
+                                except Exception:
+                                    sval = str(v)
+                            else:
+                                sval = str(v)
+                            norm[key] = sval
+                        except Exception:
+                            continue
+                elif raw:
+                    # hi ha alguna cosa però no és dict -> la convertim a prompt
+                    try:
+                        sval = str(raw)
+                        norm["Prompt"] = sval
+                    except Exception:
+                        pass
+
+                # Si no hem obtingut cap metadada real, avisem i deixem valors per defecte
+                if not norm:
+                    print("WARNING with empty metadata elements")
+                    # mantenim la metadata prèvia (defecte "None")
+                    if "metadata" not in rec or not isinstance(rec["metadata"], dict):
+                        rec["metadata"] = {
+                            "Prompt": "None",
+                            "Seed": "None",
+                            "CFG_Scale": "None",
+                            "Steps": "None",
+                            "Sampler": "None",
+                            "Model": "None",
+                            "Generated": "None",
+                            "Created_Date": "None"
+                        }
+                    return
+
+                # inserim valors llegits, assegurant que totes les claus obligatòries existeixin
+                # inicialitzem amb "None" i sobreescrivim amb valors reals
+                meta_safe = {
+                    "Prompt": "None",
+                    "Seed": "None",
+                    "CFG_Scale": "None",
+                    "Steps": "None",
+                    "Sampler": "None",
+                    "Model": "None",
+                    "Generated": "None",
+                    "Created_Date": "None"
+                }
+                for k, v in norm.items():
+                    if not isinstance(k, str):
+                        continue
+                    meta_safe[k] = str(v) if v is not None else "None"
+                rec["metadata"] = meta_safe
+        except Exception:
+            # Qualsevol error llegint la imatge -> deixem valors segurs
+            print("WARNING with empty metadata elements")
+            rec["metadata"] = {
+                "Prompt": "None",
+                "Seed": "None",
+                "CFG_Scale": "None",
+                "Steps": "None",
+                "Sampler": "None",
+                "Model": "None",
+                "Generated": "None",
+                "Created_Date": "None"
+            }
+            rec["dimensions"] = (0, 0)
+
+    # --- Getters (sempre string) ---
+    def _get_field(self, uuid: str, key: str) -> str:
+        if not uuid or uuid not in self._data_storage:
+            return "None"
+        try:
+            val = self._data_storage[uuid].get("metadata", {}).get(key, "None")
+            return "None" if val is None else str(val)
+        except Exception:
+            return "None"
 
     def get_prompt(self, uuid: str) -> str:
-        """Retorna el prompt utilitzat per generar la imatge."""
-        return self._obtenir_dada(uuid, "Prompt")
+        return self._get_field(uuid, "Prompt")
 
     def get_model(self, uuid: str) -> str:
-        """Retorna el model d'IA utilitzat."""
-        return self._obtenir_dada(uuid, "Model")
+        return self._get_field(uuid, "Model")
 
     def get_seed(self, uuid: str) -> str:
-        """Retorna la llavor aleatòria utilitzada en la generació."""
-        return self._obtenir_dada(uuid, "Seed")
+        return self._get_field(uuid, "Seed")
 
     def get_cfg_scale(self, uuid: str) -> str:
-        """Retorna el CFG Scale (guidance scale) utilitzat."""
-        return self._obtenir_dada(uuid, "CFG_Scale")
+        return self._get_field(uuid, "CFG_Scale")
 
     def get_steps(self, uuid: str) -> str:
-        """Retorna el nombre de passos d'iteració del model."""
-        return self._obtenir_dada(uuid, "Steps")
+        return self._get_field(uuid, "Steps")
 
     def get_sampler(self, uuid: str) -> str:
-        """Retorna l'algorisme de mostreig utilitzat."""
-        return self._obtenir_dada(uuid, "Sampler")
+        return self._get_field(uuid, "Sampler")
 
     def get_generated(self, uuid: str) -> str:
-        """Retorna "true" si la imatge està marcada com a generada."""
-        return self._obtenir_dada(uuid, "Generated")
+        return self._get_field(uuid, "Generated")
 
     def get_created_date(self, uuid: str) -> str:
-        """Retorna la data de creació en format YYYY-MM-DD."""
-        return self._obtenir_dada(uuid, "Created_Date")
-    
-    def get_dimensions(self, uuid: str) -> tuple[int, int]:
-        """Retorna una tupla (width, height) amb les dimensions de la imatge."""
-        amplada = self._obtenir_dada(uuid, "width")
-        altura = self._obtenir_dada(uuid, "height")
-        return (amplada, altura)
-    
+        return self._get_field(uuid, "Created_Date")
+
+    def get_dimensions(self, uuid: str) -> Tuple[int, int]:
+        if not uuid or uuid not in self._data_storage:
+            return (0, 0)
+        try:
+            dims = self._data_storage[uuid].get("dimensions", (0, 0))
+            if not isinstance(dims, tuple) or len(dims) != 2:
+                return (0, 0)
+            return (int(dims[0] or 0), int(dims[1] or 0))
+        except Exception:
+            return (0, 0)
+
+    def _obtenir_dada(self, uuid: str, clau: str):
+        if not uuid or uuid not in self._data_storage:
+            return ""
+        if clau == "file":
+            return self._data_storage[uuid].get("file_path", "")
+        return self._data_storage[uuid].get(clau)
+
     def __len__(self) -> int:
-        """ Retorna el nombre total d'UUIDs registrats. """
-        return len(self._dic_registre)
+        try:
+            return len(self._data_storage)
+        except Exception:
+            return 0
 
     def __str__(self) -> str:
-        """ Retorna una representació en text de l'objecte. """
-        return f"<ImageID: gestionant {len(self)} UUIDs>"
+        return f"<ImageData: {len(self)} imatges registrades>"
